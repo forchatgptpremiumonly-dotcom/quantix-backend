@@ -18,6 +18,12 @@ def get_db():
     return conn
 
 
+def column_exists(cur, table_name, column_name):
+    cur.execute(f"PRAGMA table_info({table_name})")
+    columns = cur.fetchall()
+    return any(col["name"] == column_name for col in columns)
+
+
 def init_db():
     conn = get_db()
     cur = conn.cursor()
@@ -45,6 +51,9 @@ def init_db():
         )
     """)
 
+    if not column_exists(cur, "users", "license_key"):
+        cur.execute("ALTER TABLE users ADD COLUMN license_key TEXT")
+
     conn.commit()
     conn.close()
 
@@ -55,31 +64,66 @@ def require_bot_auth():
 
     if not BOT_API_TOKEN:
         return False, (
-            jsonify({
-                "success": False,
-                "error": "BOT_API_TOKEN is not configured on server"
-            }),
+            jsonify({"success": False, "error": "BOT_API_TOKEN is not configured on server"}),
             500
         )
 
     if auth_header != expected:
         return False, (
-            jsonify({
-                "success": False,
-                "error": "Unauthorized"
-            }),
+            jsonify({"success": False, "error": "Unauthorized"}),
             401
         )
 
     return True, None
 
 
+def get_user_and_license_status(username: str):
+    conn = get_db()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT id, username, license_key
+        FROM users
+        WHERE username = ?
+    """, (username,))
+    user = cur.fetchone()
+
+    if not user:
+        conn.close()
+        return {"exists": False, "valid": False, "error": "User not found"}
+
+    license_key = user["license_key"]
+    if not license_key:
+        conn.close()
+        return {"exists": True, "valid": False, "error": "No license assigned"}
+
+    cur.execute("""
+        SELECT license_key, expires_at, used
+        FROM keys
+        WHERE license_key = ?
+    """, (license_key,))
+    key_row = cur.fetchone()
+    conn.close()
+
+    if not key_row:
+        return {"exists": True, "valid": False, "error": "License key deleted"}
+
+    now = int(time.time())
+    if key_row["expires_at"] < now:
+        return {"exists": True, "valid": False, "error": "License expired"}
+
+    return {
+        "exists": True,
+        "valid": True,
+        "error": None,
+        "license_key": license_key,
+        "expires_at": key_row["expires_at"]
+    }
+
+
 @app.route("/api/health", methods=["GET"])
 def health():
-    return jsonify({
-        "success": True,
-        "message": "Backend is running"
-    }), 200
+    return jsonify({"success": True, "message": "Backend is running"}), 200
 
 
 @app.route("/api/register", methods=["POST"])
@@ -126,10 +170,10 @@ def register():
     password_hash = generate_password_hash(password)
     now = int(time.time())
 
-    cur.execute(
-        "INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, ?)",
-        (username, password_hash, now)
-    )
+    cur.execute("""
+        INSERT INTO users (username, password_hash, created_at, license_key)
+        VALUES (?, ?, ?, ?)
+    """, (username, password_hash, now, key))
 
     cur.execute("""
         UPDATE keys
@@ -142,10 +186,7 @@ def register():
     conn.commit()
     conn.close()
 
-    return jsonify({
-        "success": True,
-        "message": "Account created successfully"
-    }), 200
+    return jsonify({"success": True, "message": "Account created successfully"}), 200
 
 
 @app.route("/api/login", methods=["POST"])
@@ -162,7 +203,7 @@ def login():
     cur = conn.cursor()
 
     cur.execute("""
-        SELECT id, username, password_hash
+        SELECT id, username, password_hash, license_key
         FROM users
         WHERE username = ?
     """, (username,))
@@ -175,12 +216,43 @@ def login():
     if not check_password_hash(user["password_hash"], password):
         return jsonify({"success": False, "error": "Invalid login"}), 401
 
+    license_status = get_user_and_license_status(username)
+    if not license_status["valid"]:
+        return jsonify({
+            "success": False,
+            "error": license_status["error"] or "License invalid"
+        }), 403
+
     return jsonify({
         "success": True,
         "user": {
             "id": user["id"],
-            "username": user["username"]
+            "username": user["username"],
+            "license_key": user["license_key"]
         }
+    }), 200
+
+
+@app.route("/api/check_access/<username>", methods=["GET"])
+def check_access(username):
+    username = str(username).strip()
+
+    if not username:
+        return jsonify({"success": False, "valid": False, "error": "Username is required"}), 400
+
+    status = get_user_and_license_status(username)
+
+    if not status["exists"]:
+        return jsonify({"success": False, "valid": False, "error": status["error"]}), 404
+
+    if not status["valid"]:
+        return jsonify({"success": False, "valid": False, "error": status["error"]}), 403
+
+    return jsonify({
+        "success": True,
+        "valid": True,
+        "license_key": status["license_key"],
+        "expires_at": status["expires_at"]
     }), 200
 
 
@@ -226,10 +298,7 @@ def bot_add_key():
     conn.commit()
     conn.close()
 
-    return jsonify({
-        "success": True,
-        "message": "Key added"
-    }), 201
+    return jsonify({"success": True, "message": "Key added"}), 201
 
 
 @app.route("/api/bot/update_key", methods=["POST"])
@@ -270,10 +339,7 @@ def bot_update_key():
     conn.commit()
     conn.close()
 
-    return jsonify({
-        "success": True,
-        "message": "Key updated"
-    }), 200
+    return jsonify({"success": True, "message": "Key updated"}), 200
 
 
 @app.route("/api/bot/delete_key", methods=["POST"])
@@ -302,10 +368,7 @@ def bot_delete_key():
     conn.commit()
     conn.close()
 
-    return jsonify({
-        "success": True,
-        "message": "Key deleted"
-    }), 200
+    return jsonify({"success": True, "message": "Key deleted"}), 200
 
 
 @app.route("/api/bot/info_key/<license_key>", methods=["GET"])
