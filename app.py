@@ -283,11 +283,16 @@ def bot_add_key():
     cur = conn.cursor()
 
     cur.execute("SELECT id FROM keys WHERE license_key = ?", (license_key,))
-    existing = cur.fetchone()
-
-    if existing:
+    existing_key = cur.fetchone()
+    if existing_key:
         conn.close()
         return jsonify({"success": False, "error": "Key already exists"}), 409
+
+    cur.execute("SELECT id FROM keys WHERE user_id = ?", (user_id,))
+    existing_user_key = cur.fetchone()
+    if existing_user_key:
+        conn.close()
+        return jsonify({"success": False, "error": "This user already has a key"}), 409
 
     cur.execute("""
         INSERT INTO keys (
@@ -395,6 +400,98 @@ def bot_info_key(license_key):
         FROM keys
         WHERE license_key = ?
     """, (license_key,))
+    row = cur.fetchone()
+    conn.close()
+
+    if not row:
+        return jsonify({"success": False, "error": "Key not found"}), 404
+
+    return jsonify({
+        "success": True,
+        "key": {
+            "license_key": row["license_key"],
+            "user_id": row["user_id"],
+            "added_by": row["added_by"],
+            "expires_at": row["expires_at"],
+            "created_at": row["created_at"],
+            "used": row["used"],
+            "used_by_username": row["used_by_username"],
+            "used_at": row["used_at"]
+        }
+    }), 200
+
+
+@app.route("/api/bot/info_keys", methods=["GET"])
+def bot_info_keys():
+    ok, error_response = require_bot_auth()
+    if not ok:
+        return error_response
+
+    conn = get_db()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT
+            license_key,
+            user_id,
+            added_by,
+            expires_at,
+            created_at,
+            used,
+            used_by_username,
+            used_at
+        FROM keys
+        ORDER BY id DESC
+    """)
+    rows = cur.fetchall()
+    conn.close()
+
+    return jsonify({
+        "success": True,
+        "keys": [
+            {
+                "license_key": row["license_key"],
+                "user_id": row["user_id"],
+                "added_by": row["added_by"],
+                "expires_at": row["expires_at"],
+                "created_at": row["created_at"],
+                "used": row["used"],
+                "used_by_username": row["used_by_username"],
+                "used_at": row["used_at"]
+            }
+            for row in rows
+        ]
+    }), 200
+
+
+@app.route("/api/bot/user_key/<user_id>", methods=["GET"])
+def bot_user_key(user_id):
+    ok, error_response = require_bot_auth()
+    if not ok:
+        return error_response
+
+    user_id = str(user_id).strip()
+
+    if not user_id:
+        return jsonify({"success": False, "error": "Missing user_id"}), 400
+
+    conn = get_db()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT
+            license_key,
+            user_id,
+            added_by,
+            expires_at,
+            created_at,
+            used,
+            used_by_username,
+            used_at
+        FROM keys
+        WHERE user_id = ?
+        LIMIT 1
+    """, (user_id,))
     row = cur.fetchone()
     conn.close()
 
