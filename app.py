@@ -8,14 +8,21 @@ from werkzeug.security import generate_password_hash, check_password_hash
 app = Flask(__name__)
 CORS(app)
 
-# ΤΟ CONNECTION STRING ΣΟΥ
+# Σύνδεση με τη MongoDB Atlas που φτιάξαμε
 MONGO_URI = "mongodb+srv://forchatgptpremiumonly_db_user:e6WVHbswCyLIXVdP@cluster0.6tyqxdb.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
 BOT_API_TOKEN = os.environ.get("BOT_API_TOKEN", "quantix_super_secret_928374923")
 
-client = MongoClient(MONGO_URI)
-db = client['quantix_database']
-users_col = db['users']
-keys_col = db['keys']
+# Αρχικοποίηση MongoDB Client
+try:
+    client = MongoClient(MONGO_URI)
+    db = client['quantix_database']
+    users_col = db['users']
+    keys_col = db['keys']
+    # Test connection
+    client.admin.command('ping')
+    print("Successfully connected to MongoDB Atlas!")
+except Exception as e:
+    print(f"MongoDB Connection Error: {e}")
 
 def require_bot_auth():
     auth_header = request.headers.get("Authorization", "")
@@ -61,7 +68,7 @@ def register():
         {"$set": {"used": 1, "used_by_username": username, "used_at": now}}
     )
 
-    return jsonify({"success": True, "message": "Account created"}), 200
+    return jsonify({"success": True, "message": "Account created successfully"}), 200
 
 @app.route("/api/login", methods=["POST"])
 def login():
@@ -71,7 +78,7 @@ def login():
 
     user = users_col.find_one({"username": username})
     if not user or not check_password_hash(user["password_hash"], password):
-        return jsonify({"success": False, "error": "Invalid login"}), 401
+        return jsonify({"success": False, "error": "Invalid credentials"}), 401
 
     key_info = keys_col.find_one({"license_key": user["license_key"]})
     if not key_info or key_info["expires_at"] < int(time.time()):
@@ -82,7 +89,7 @@ def login():
         "user": {"username": username, "license_key": user["license_key"]}
     }), 200
 
-# BOT API
+# BOT API ENDPOINTS
 @app.route("/api/bot/add_key", methods=["POST"])
 def bot_add_key():
     ok, err = require_bot_auth()
@@ -90,12 +97,12 @@ def bot_add_key():
     data = request.get_json(silent=True) or {}
     
     if keys_col.find_one({"license_key": data.get("license_key")}):
-        return jsonify({"success": False, "error": "Key exists"}), 409
+        return jsonify({"success": False, "error": "Key already exists"}), 409
 
     keys_col.insert_one({
         "license_key": data.get("license_key"),
-        "user_id": data.get("user_id"),
-        "added_by": data.get("added_by"),
+        "user_id": str(data.get("user_id")),
+        "added_by": str(data.get("added_by")),
         "expires_at": int(data.get("expires_at")),
         "created_at": int(data.get("created_at")),
         "used": 0
@@ -109,13 +116,32 @@ def bot_info_keys():
     all_keys = list(keys_col.find({}, {"_id": 0}))
     return jsonify({"success": True, "keys": all_keys}), 200
 
+@app.route("/api/bot/info_key/<license_key>", methods=["GET"])
+def bot_info_key(license_key):
+    ok, err = require_bot_auth()
+    if not ok: return err
+    key = keys_col.find_one({"license_key": str(license_key).upper()}, {"_id": 0})
+    if not key: return jsonify({"success": False, "error": "Not found"}), 404
+    return jsonify({"success": True, "key": key}), 200
+
 @app.route("/api/bot/user_key/<user_id>", methods=["GET"])
 def bot_user_key(user_id):
     ok, err = require_bot_auth()
     if not ok: return err
     key = keys_col.find_one({"user_id": str(user_id)}, {"_id": 0})
-    if not key: return jsonify({"success": False}), 404
+    if not key: return jsonify({"success": False, "error": "No key for this user"}), 404
     return jsonify({"success": True, "key": key}), 200
+
+@app.route("/api/bot/update_key", methods=["POST"])
+def bot_update_key():
+    ok, err = require_bot_auth()
+    if not ok: return err
+    data = request.get_json(silent=True) or {}
+    keys_col.update_one(
+        {"license_key": data.get("license_key")},
+        {"$set": {"expires_at": int(data.get("expires_at"))}}
+    )
+    return jsonify({"success": True}), 200
 
 @app.route("/api/bot/delete_key", methods=["POST"])
 def bot_delete_key():
@@ -126,4 +152,5 @@ def bot_delete_key():
     return jsonify({"success": True}), 200
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
