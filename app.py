@@ -11,7 +11,7 @@ CORS(app)
 
 # ΣΤΟΙΧΕΙΑ ΣΥΝΔΕΣΗΣ - ΤΑ ΒΑΖΟΥΜΕ ΚΑΘΑΡΑ
 raw_user = "forchatgptpremiumonly_db_user"
-raw_pass = "e6WVHbswCyLlXVdP" # Σιγουρέψου ότι αυτό είναι το τρέχον password στο MongoDB Atlas
+raw_pass = "Stelios2026" # Σιγουρέψου ότι αυτό είναι το τρέχον password στο MongoDB Atlas
 cluster_url = "cluster0.6tyqxdb.mongodb.net"
 db_name = "quantix_database"
 
