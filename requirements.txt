@@ -1,4 +1,4 @@
 flask
 flask-cors
 werkzeug
-psycopg2-binary
+pymongo[srv]
