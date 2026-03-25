@@ -7,7 +7,6 @@ from werkzeug.security import generate_password_hash, check_password_hash
 app = Flask(__name__)
 CORS(app)
 
-# --- ΣΤΟΙΧΕΙΑ ΣΥΝΔΕΣΗΣ MONGODB ---
 raw_user = "forchatgptpremiumonly_db_user"
 raw_pass = "Stelios2026"  # Βεβαιώσου ότι είναι το password στη MongoDB Atlas
 cluster_url = "cluster0.6tyqxdb.mongodb.net"
