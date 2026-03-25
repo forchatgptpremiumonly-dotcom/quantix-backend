@@ -28,6 +28,7 @@ try:
 except Exception as e:
     print(f"--- DATABASE ERROR: {e} ---")
 
+# API TOKEN ΓΙΑ ΤΗΝ ΕΠΙΚΟΙΝΩΝΙΑ ΜΕ ΤΟ BOT
 BOT_API_TOKEN = os.environ.get("BOT_API_TOKEN", "quantix_super_secret_928374923")
 
 def require_bot_auth():
@@ -47,6 +48,7 @@ def register():
     data = request.get_json(silent=True) or {}
     u, p, k = str(data.get("username", "")).strip(), str(data.get("password", "")).strip(), str(data.get("key", "")).upper().strip()
     if not u or not p or not k: return jsonify({"success": False, "error": "Fill all fields"}), 400
+    
     if users_col.find_one({"username": u}): return jsonify({"success": False, "error": "User exists"}), 400
     
     key_data = keys_col.find_one({"license_key": k})
@@ -71,31 +73,53 @@ def login():
     user = users_col.find_one({"username": u})
     if user and check_password_hash(user["password_hash"], p):
         key = keys_col.find_one({"license_key": user["license_key"]})
-        if not key or key["expires_at"] < int(time.time()): return jsonify({"success": False, "error": "Expired"}), 403
+        if not key or int(key["expires_at"]) < int(time.time()): 
+            return jsonify({"success": False, "error": "Expired"}), 403
         return jsonify({"success": True, "user": {"username": u}}), 200
     return jsonify({"success": False, "error": "Invalid login"}), 401
 
 # --- ENDPOINTS ΓΙΑ ΤΟ BOT ---
 
+# 1. ΠΡΟΣΘΗΚΗ ΝΕΟΥ ΚΛΕΙΔΙΟΥ
 @app.route("/api/bot/add_key", methods=["POST"])
 def bot_add_key():
     ok, err = require_bot_auth()
     if not ok: return err
     data = request.get_json()
     keys_col.insert_one({
-        "license_key": data.get("license_key"), "user_id": str(data.get("user_id")),
-        "added_by": str(data.get("added_by")), "expires_at": int(data.get("expires_at")),
-        "created_at": int(data.get("created_at")), "used": 0
+        "license_key": str(data.get("license_key")).upper().strip(),
+        "user_id": str(data.get("user_id")),
+        "added_by": str(data.get("added_by")),
+        "expires_at": int(data.get("expires_at")),
+        "created_at": int(data.get("created_at")),
+        "used": 0
     })
     return jsonify({"success": True}), 201
 
+# 2. ΕΝΗΜΕΡΩΣΗ ΧΡΟΝΟΥ ΚΛΕΙΔΙΟΥ (Update Key)
+@app.route("/api/bot/update_key", methods=["POST"])
+def bot_update_key():
+    ok, err = require_bot_auth()
+    if not ok: return err
+    data = request.get_json()
+    lk = str(data.get("license_key")).upper().strip()
+    new_expires = int(data.get("expires_at"))
+    
+    result = keys_col.update_one({"license_key": lk}, {"$set": {"expires_at": new_expires}})
+    if result.matched_count > 0:
+        return jsonify({"success": True, "message": "Key updated"}), 200
+    return jsonify({"success": False, "error": "Key not found"}), 404
+
+# 3. ΔΙΑΓΡΑΦΗ ΚΛΕΙΔΙΟΥ
 @app.route("/api/bot/delete_key", methods=["POST"])
 def bot_delete_key():
     ok, err = require_bot_auth()
     if not ok: return err
-    keys_col.delete_one({"license_key": request.get_json().get("license_key")})
+    lk = str(request.get_json().get("license_key")).upper().strip()
+    keys_col.delete_one({"license_key": lk})
     return jsonify({"success": True}), 200
 
+# 4. ΔΙΑΓΡΑΦΗ ΛΟΓΑΡΙΑΣΜΟΥ ΧΡΗΣΤΗ (Cleanup)
 @app.route("/api/bot/delete_user_by_id/<user_id>", methods=["POST"])
 def delete_user_by_id(user_id):
     ok, err = require_bot_auth()
@@ -103,12 +127,23 @@ def delete_user_by_id(user_id):
     users_col.delete_many({"user_id": str(user_id)})
     return jsonify({"success": True}), 200
 
+# 5. ΛΙΣΤΑ ΟΛΩΝ ΤΩΝ ΚΛΕΙΔΙΩΝ (info_key)
 @app.route("/api/bot/info_keys", methods=["GET"])
 def bot_info_keys():
     ok, err = require_bot_auth()
     if not ok: return err
     return jsonify({"success": True, "keys": list(keys_col.find({}, {"_id": 0}))}), 200
 
+# 6. ΠΛΗΡΟΦΟΡΙΕΣ ΓΙΑ ΣΥΓΚΕΚΡΙΜΕΝΟ ΚΛΕΙΔΙ (Χρειάζεται για Autocomplete & Update)
+@app.route("/api/bot/info_key/<license_key>", methods=["GET"])
+def bot_get_single_key(license_key):
+    ok, err = require_bot_auth()
+    if not ok: return err
+    k = keys_col.find_one({"license_key": license_key.upper().strip()}, {"_id": 0})
+    if k: return jsonify({"success": True, "key": k}), 200
+    return jsonify({"success": False, "error": "Key not found"}), 404
+
+# 7. ΕΥΡΕΣΗ ΚΛΕΙΔΙΟΥ ΒΑΣΕΙ DISCORD ID
 @app.route("/api/bot/user_key/<user_id>", methods=["GET"])
 def bot_user_key(user_id):
     ok, err = require_bot_auth()
