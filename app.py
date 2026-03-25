@@ -7,6 +7,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 app = Flask(__name__)
 CORS(app)
 
+# --- ΣΤΟΙΧΕΙΑ ΣΥΝΔΕΣΗΣ MONGODB ---
 raw_user = "forchatgptpremiumonly_db_user"
 raw_pass = "Stelios2026"  # Βεβαιώσου ότι είναι το password στη MongoDB Atlas
 cluster_url = "cluster0.6tyqxdb.mongodb.net"
@@ -37,7 +38,6 @@ def require_bot_auth():
 
 # --- ENDPOINTS ΓΙΑ ΤΟ CRON-JOB & SITE ---
 
-# Δέχεται και GET και HEAD για να μη βγάζει 405 το cron-job.org
 @app.route("/api/health", methods=["GET", "HEAD"])
 def health():
     return jsonify({"success": True, "status": "Stable"}), 200
@@ -53,7 +53,6 @@ def register():
     if not key_data or key_data.get("used") == 1 or key_data.get("expires_at") < int(time.time()):
         return jsonify({"success": False, "error": "Invalid/Used/Expired key"}), 400
     
-    # ΕΠΙΒΟΛΗ ΚΑΝΟΝΑ: 1 Discord ID = 1 Account
     if users_col.find_one({"user_id": key_data["user_id"]}):
         return jsonify({"success": False, "error": "You already have an account linked to your Discord!"}), 400
 
@@ -76,12 +75,14 @@ def login():
         return jsonify({"success": True, "user": {"username": u}}), 200
     return jsonify({"success": False, "error": "Invalid login"}), 401
 
-# --- ENDPOINTS ΓΙΑ ΤΟ BOT (CLEANUP) ---
+# --- ENDPOINTS ΓΙΑ ΤΟ BOT ---
 
 @app.route("/api/bot/add_key", methods=["POST"])
 def bot_add_key():
-    ok, err = require_bot_auth(); if not ok: return err
-    data = request.get_json(); keys_col.insert_one({
+    ok, err = require_bot_auth()
+    if not ok: return err
+    data = request.get_json()
+    keys_col.insert_one({
         "license_key": data.get("license_key"), "user_id": str(data.get("user_id")),
         "added_by": str(data.get("added_by")), "expires_at": int(data.get("expires_at")),
         "created_at": int(data.get("created_at")), "used": 0
@@ -90,25 +91,28 @@ def bot_add_key():
 
 @app.route("/api/bot/delete_key", methods=["POST"])
 def bot_delete_key():
-    ok, err = require_bot_auth(); if not ok: return err
+    ok, err = require_bot_auth()
+    if not ok: return err
     keys_col.delete_one({"license_key": request.get_json().get("license_key")})
     return jsonify({"success": True}), 200
 
-# ΔΙΑΓΡΑΦΗ ΧΡΗΣΤΗ (Όταν το Bot βγάζει νέο κλειδί)
 @app.route("/api/bot/delete_user_by_id/<user_id>", methods=["POST"])
 def delete_user_by_id(user_id):
-    ok, err = require_bot_auth(); if not ok: return err
+    ok, err = require_bot_auth()
+    if not ok: return err
     users_col.delete_many({"user_id": str(user_id)})
     return jsonify({"success": True}), 200
 
 @app.route("/api/bot/info_keys", methods=["GET"])
 def bot_info_keys():
-    ok, err = require_bot_auth(); if not ok: return err
+    ok, err = require_bot_auth()
+    if not ok: return err
     return jsonify({"success": True, "keys": list(keys_col.find({}, {"_id": 0}))}), 200
 
 @app.route("/api/bot/user_key/<user_id>", methods=["GET"])
 def bot_user_key(user_id):
-    ok, err = require_bot_auth(); if not ok: return err
+    ok, err = require_bot_auth()
+    if not ok: return err
     k = keys_col.find_one({"user_id": str(user_id)}, {"_id": 0})
     return jsonify({"success": True, "key": k}) if k else (jsonify({"success": False}), 404)
 
